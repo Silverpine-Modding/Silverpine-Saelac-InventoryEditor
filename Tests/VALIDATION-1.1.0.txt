@@ -1,0 +1,19 @@
+Inventory Editor 1.1.0 validation
+
+Release build: passed, zero warnings and errors.
+Automated harness: 105 checks passed.
+Installed DLL SHA256: 96C1D1C907F61F54BE4BD09D88EBFD5145861997C858F3A5EC2F3A036F190C8A
+
+New checks include:
+- Exact durability edits, including zero, bypass random/destructive damage callbacks.
+- Spoilage minutes convert to native half-minute ticks and retain odd-tick precision.
+- Unedited timers continue without being reset by unrelated text edits.
+- Enchantment changes remove old equipped bonuses, apply new bonuses, and retain equipped state.
+- Repeated enchantment changes do not stack bonuses; None removes the bonus/component.
+- Add and duplicate apply independent condition/enchantment edits without mutating the source.
+- Unsupported item components and invalid numeric/enchantment input are rejected.
+- An injected enchantment-install failure restores text, condition, enchantment and equipment bonus.
+- Native durability/spoilage serialized fields and timer conversion were checked in the installed game DLL.
+
+All previous inventory, text, currency, carrying-capacity, rollback, menu and assembly checks remain passing.
+The new Condition tab compiled against the installed game/framework assemblies. Version 1.1.0 was not live-tested in the game; prior version 1.0.0 visual checks are recorded in VALIDATION-1.0.0.txt.

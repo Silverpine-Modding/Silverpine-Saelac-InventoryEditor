@@ -1,0 +1,16 @@
+Inventory Editor 1.0.0 validation
+
+Release build: passed, zero warnings and errors.
+Automated harness: 64 checks passed (inventory changes, independent clones, text rules, gold, base capacity, rollback, and installed assembly contracts).
+Installed DLL SHA256: B3D51E2E4309249A6C144419B9A9CCBAF014C8B172283B642AD619658D1F34C5
+
+Live Silverpine 1.7.3 checks:
+- BepInEx loaded Inventory Editor 1.0.0 successfully.
+- Charcoal interface rendered at both maximized and small window sizes.
+- Live inventory, equipped markers, sprites, gold, base capacity and current bulk displayed.
+- Selected-item details and custom-text controls rendered correctly.
+- Category picker filtered Weapon to 14 results from 203 loaded templates.
+- Escape restored the Mods menu; reopening Inventory Editor succeeded.
+- No Inventory Editor exceptions appeared in the BepInEx log.
+
+Inventory/stat mutation and save persistence were checked through the service harness and installed assembly inspection, not by changing or saving the user's live character.
