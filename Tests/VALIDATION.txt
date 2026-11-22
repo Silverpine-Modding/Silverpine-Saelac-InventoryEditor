@@ -1,19 +1,25 @@
-Inventory Editor 1.2.0 validation
+Inventory Editor 1.3.0 validation
 
 Release build: passed, zero warnings and errors.
-Automated harness: 146 checks passed.
-Installed DLL SHA256: 4CB3BD28282842682A41C46CDAF592A74FF6676EBF7C4C56C51121C9EE1575CA
+Automated harness: 216 checks passed, zero build warnings.
+Built/installed DLL SHA256: 92D6F0A968936E86D9F235E5E01AF128004A2456EACB59361FA37F945D59795F
 
 New coverage:
-- Food/water draft reads and Apply detection for food-only edits.
-- Selected item updates while templates and other copies retain their values.
-- Sanity, well-fed and spoilage preservation.
-- Add and duplicate with customized hunger/thirst values, including zero and negative effects.
-- Water-only edits preserve newer food values; beverages without expiry are supported.
-- Invalid/non-integer/overflowing/out-of-range inputs reject without partial changes.
-- Combined-edit rollback restores food/water after injected enchantment failure.
-- Non-edible and removed items reject food/water edits.
-- Installed game DLL checks confirm private integer hungerLoss/thirstLoss fields are serialized, deserialized and used by the native consumption callback.
+- Native inventory stack grouping and exact serialized-data comparison contracts.
+- Matching items group; text, model, condition, nutrition and quality differences remain separate.
+- Absolute count growth above the existing Add/Duplicate batch limit, reduction and removal to zero.
+- Independent cloned items, preservation of original objects and equipped members.
+- Whole-stack undo, capacity preflight, idempotency, retry and equipped-bonus restoration.
+- Stale counts, removed items, changed characters, invalid limits and unsupported stack edits reject.
+- Pickup/removal/undo hook failures roll back; pickup changes to stack identity reject.
+- Serialization failures keep individual objects visible and disable stack-count editing.
+- All seven native quality tiers; mixed quality components and quality-only drafts.
+- Add/Duplicate quality changes leave source and templates unchanged.
+- Equipped upgrades/downgrades refresh armor without accumulating bonuses.
+- Combined-edit failure restores text, condition, mixed quality, equipment and exact potion potency.
+- Unsupported item quality and invalid tiers reject; native potion mapping and save contracts checked.
 
-All previous inventory, text, condition, enchantment, currency, carrying-capacity and framework checks remain passing.
-The new tab compiled against the installed game/framework assemblies. Version 1.2.0 was not live-tested in the game; prior visual checks are recorded in VALIDATION-1.0.0.txt.
+The running game retained version 1.2.0. Its mapped DLL was moved to a backup and
+1.3.0 installed at the normal plugin path for the next launch without stopping
+the game. The new controls have not been visually checked in a live Unity session.
+No live character data or saves were changed during validation.

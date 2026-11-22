@@ -10,7 +10,7 @@ public sealed class Plugin : BaseUnityPlugin
 {
     public const string PluginGuid = "Saelac.Silverpine.InventoryEditor";
     public const string PluginName = "Inventory Editor";
-    public const string PluginVersion = "1.2.0";
+    public const string PluginVersion = "1.3.0";
     internal static ManualLogSource Log = null!;
 
     private void Awake()

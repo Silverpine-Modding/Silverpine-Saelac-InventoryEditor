@@ -2,7 +2,7 @@
 
 A live, in-game debug inventory editor for **Silverpine 1.7.3**, created by **Saelac and ChatGPT**.
 
-Version: **1.2.0**. Requires BepInEx 5 and [Modding Tools **1.10.0 or newer**](https://github.com/Silverpine-Modding/Silverpine-Saelac-Modding-Tools/releases).
+Version: **1.3.0**. Requires BepInEx 5 and [Modding Tools **1.10.0 or newer**](https://github.com/Silverpine-Modding/Silverpine-Saelac-Modding-Tools/releases).
 
 [Download the latest release](https://github.com/Silverpine-Modding/Silverpine-Saelac-InventoryEditor/releases/latest).
 
@@ -10,18 +10,34 @@ Version: **1.2.0**. Requires BepInEx 5 and [Modding Tools **1.10.0 or newer**](h
 
 Load your character, open **Inventory > Mods > Inventory Editor**, or press **M** with the default Modding Tools shortcut and choose **Inventory Editor**. Close or Escape returns to the framework's Mods menu.
 
-The charcoal-black interface uses three panels: item library, current inventory, and item details. The details panel has **Details**, **Custom text**, **Condition**, and **Food / water** tabs. Edits take effect when you click **Apply changes to item**, **Add**, or **Duplicate**. Gold, capacity and removal actions take effect when clicked. Save normally in Silverpine to keep changes; the editor does not force a save.
+The charcoal-black interface uses three panels: item library, current inventory, and item details. The details panel has **Details**, **Text**, **Condition**, **Food/water**, and **Quality** tabs. Item-property edits take effect when you click **Apply changes to item**, **Add**, or **Duplicate**. Stack counts, gold, capacity and removal actions take effect when clicked. Save normally in Silverpine to keep changes; the editor does not force a save.
 
 ## Items
 
 - Search the complete loaded `ItemLibrary` by name, description or category. The scrollable browser includes loaded custom packs, same-name template variants, and internal `HIDDEN_` templates. It has no result cap; only visible rows are drawn.
 - Click **+** to add one library item. Select a template to inspect it and add 1–100 copies per action.
-- Every current inventory row represents one actual item. Equipped items appear first. Select a row to duplicate its serialized state, including durability, quality and enchantment.
-- **Remove item** removes only the selected object and uses native unequip behavior. **Undo last removal** restores the exact item and its equipped state when capacity permits. This single removal receipt lasts until another successful removal or closing the window.
-- In **Custom text**, enable **Use custom name & description** to add personalized copies, or use **Apply changes to item** to edit the selected existing item. Templates and other item instances are not changed. Appearance, stats and components are inherited except for your explicit condition, enchantment, food and water edits.
+- Matching inventory items share a row with an **×count** badge. Stacks containing equipped items appear first. Select a row to duplicate an item's serialized state, including durability, quality and enchantment.
+- **Remove one** removes the inspected object and uses native unequip behavior. **Undo last removal** restores the exact removed item(s) and equipped state when capacity permits. This receipt lasts until another successful removal or closing the window.
+- In **Text**, enable **Use custom name & description** to add personalized copies, or use **Apply changes to item** to edit the inspected existing item. Templates and other item instances are not changed. Appearance, stats and components are inherited except for your explicit condition, quality, enchantment, food and water edits. An edited item splits from its stack when its saved data changes.
 - Names use the native generation grammar: letters A–Z/a–z, digits, spaces, and `. , ! ? ' -`. The native name grammar has no length cap.
 - Descriptions use letters, spaces, and that punctuation, without digits, up to 30 words. These are the `NPCFunction_GiveItem` generation grammar and prompt rules; the game serializer itself does not impose a word cap. Input is filtered and excess description words are trimmed.
 - The editor honors native slot capacity and `allowEncumbered`. A batch is checked in full before any copies are added. Gold items convert to currency through the native pickup behavior. New copies discard vendor-stock ownership.
+
+## Stacks and quantities
+
+- Stacks follow Silverpine's own inventory rule: matching names and identical type-prefixed serialized item data. There is no separate native stack-size field or category whitelist. Different descriptions, models, durability, spoilage, quality, enchantments or component values stay separate, even if names match.
+- Select an inventory row, open **Details**, enter the desired total under **Stack count**, and click **Set stack count**. Values are 0–10,000; zero removes the entire selected stack. The maximum is an editor guardrail, not a native stack limit.
+- Increasing a stack adds independent copies of the inspected item's current saved state. Pending text, condition, quality and food/water drafts apply separately through **Apply changes to item** or **Add/Duplicate**. **Copies to add** continues to mean additional copies, not the total stack count.
+- Reducing a stack removes unequipped copies first and keeps the inspected object where possible. **Undo last removal** restores the whole reduction, including original instances and equipment, after checking capacity for the complete operation.
+- Capacity limits still count individual objects. Count changes are checked against the current inventory; stale counts and failed operations are rejected or rolled back. Copies that change identity during cloning or pickup cannot be used to enlarge a stack.
+- Items whose serialization fails remain visible as separate rows with quantity editing disabled. Currency pickups and vendor-owned objects cannot be resized as stacks.
+
+## Rarity / quality
+
+- Select an item and open **Quality**. Only items implementing the native quality system expose editable tiers: **Normal**, **Quality**, **Superior**, **Exceptional**, **Pristine**, **Blessed**, and **Legendary**. **Unchanged** preserves existing values.
+- **Apply changes to item** updates one inspected item. **Add/Duplicate** applies the selected tier to every new copy. All quality-bearing components on that item use the chosen tier through the native setter.
+- Equipped items are unequipped and re-equipped to refresh quality-dependent armor and other bonuses. Potions use the native quality-to-potency mapping. A failed combined edit restores original component data, including exact potion potency between tiers.
+- Quality continues to use the game's normal stats, value calculations, and save data. The editor does not invent new rarity tiers or add quality support to items that lack it.
 
 ## Durability, spoilage and enchantments
 
@@ -34,7 +50,7 @@ The charcoal-black interface uses three panels: item library, current inventory,
 
 ## Food and water values
 
-- Select a food or drink and open **Food / water**. **Food value** controls hunger restored; **Water value** controls thirst restored. These controls appear for any item with the native edible component, including drinks and custom meals, regardless of category or whether it has a spoilage timer.
+- Select a food or drink and open **Food/water**. **Food value** controls hunger restored; **Water value** controls thirst restored. These controls appear for any item with the native edible component, including drinks and custom meals, regardless of category or whether it has a spoilage timer.
 - Enter whole numbers. Positive values restore the resource, zero has no effect, and negative values increase hunger or thirst. The editor allows -100,000 to 100,000, matching Custom Item Loader's food-value editor range; this is an editor guardrail rather than a native cap.
 - Click **Apply changes to item** to update only the selected object, or **Add/Duplicate** to create copies with those values. **Reset** restores each field's original draft value. The library's quick **+** continues to add an unedited template.
 - Hunger and thirst values are edited on the existing edible component. Sanity effects, the well-fed effect, spoilage and other properties remain unchanged unless separately edited. Values use the native consumption and save fields, so they persist in normal saves.
@@ -60,7 +76,7 @@ Items supplied by other mods may still require their original assets, components
 
 ## Installation
 
-Close Silverpine and extract `InventoryEditor-1.2.0.zip` into `BepInEx/plugins/`. The ZIP contains an `InventoryEditor` folder with the DLL and README. Alternatively, place the standalone `InventoryEditor.dll` under `BepInEx/plugins/InventoryEditor/`.
+Close Silverpine and extract `InventoryEditor-1.3.0.zip` into `BepInEx/plugins/`. The ZIP contains an `InventoryEditor` folder with the DLL and README. Alternatively, place the standalone `InventoryEditor.dll` under `BepInEx/plugins/InventoryEditor/`.
 
 Keep one copy of Inventory Editor and exactly one existing copy of `ModdingTools.dll`; this plugin does not bundle or replace the framework. Restart Silverpine after installation. Custom Item Loader is optional for loaded custom templates and its carrying-capacity modifiers.
 

@@ -3,6 +3,27 @@ public enum EquipmentSlotType { NotEquipable, Chest, Weapon }
 public class ItemComponent_VendorItem { }
 public class ItemComponent_Gold { }
 public class Condition { public int durability = 37; }
+public enum Quality { Normal, Quality, Superior, Exceptional, Pristine, Blessed, Legendary }
+public interface IQualityItemComponent { Quality Quality { get; set; } }
+public abstract class ItemComponent
+{
+    public abstract void Serialize(BinaryWriter writer);
+    public abstract void Deserialize(BinaryReader reader);
+}
+public class QualityComponent : ItemComponent, IQualityItemComponent
+{
+    public Quality Quality { get; set; }
+    public bool skipDeserialize;
+    public override void Serialize(BinaryWriter writer) => writer.Write((int)Quality);
+    public override void Deserialize(BinaryReader reader) { if (!skipDeserialize) Quality = (Quality)reader.ReadInt32(); }
+}
+public class PotionQuality : ItemComponent, IQualityItemComponent
+{
+    public float potency = 1.37f;
+    public Quality Quality { get => (Quality)(int)potency; set => potency = (int)value; }
+    public override void Serialize(BinaryWriter writer) => writer.Write(potency);
+    public override void Deserialize(BinaryReader reader) => potency = reader.ReadSingle();
+}
 public class ItemComponent_Edible
 {
     private int hungerLoss, thirstLoss;
@@ -44,12 +65,14 @@ public class Item
     public EquipmentSlotType slot;
     public Inventory? inventory;
     public Action<Item>? added, removed;
+    public bool failSerialization;
     public List<object> components = new();
     public T? GetItemComponent<T>() => components.OfType<T>().FirstOrDefault();
     public List<T> GetItemComponents<T>() => components.OfType<T>().ToList();
     public void RemoveItemComponentsOfType<T>() => components.RemoveAll(c => c is T);
     public Action<object>? addingComponent;
     public void AddItemComponent(object component) { addingComponent?.Invoke(component); components.Add(component); }
+    public Item SetQuality(Quality quality) { foreach (var component in GetItemComponents<IQualityItemComponent>()) component.Quality = quality; return this; }
     public Item DeepClone() => new()
     {
         name = name, description = description, spriteName = spriteName, bulk = bulk, value = value,
@@ -63,9 +86,30 @@ public class Item
             ItemComponent_Enchantment e => new ItemComponent_Enchantment { enchantmentType = e.enchantmentType },
             ItemComponent_VendorItem => new ItemComponent_VendorItem(),
             ItemComponent_Gold => new ItemComponent_Gold(),
+            QualityComponent q => new QualityComponent { Quality = q.Quality },
+            PotionQuality q => new PotionQuality { potency = q.potency },
             _ => throw new Exception("Unknown test component")
         }).ToList()
     };
+}
+public static class TypeSerializationUtility
+{
+    // Deterministic stand-in for native type-prefixed serialization; the production
+    // serializer and InventoryUI comparison are checked against the game assembly.
+    public static void SerializeWithType(Item item, BinaryWriter writer)
+    {
+        if (item.failSerialization) throw new InvalidOperationException("Injected serializer failure");
+        writer.Write(item.GetType().FullName!); writer.Write(item.name); writer.Write(item.description);
+        writer.Write(item.spriteName); writer.Write(item.bulk); writer.Write(item.value); writer.Write((int)item.slot);
+        writer.Write(item.components.Count);
+        foreach (var component in item.components)
+        {
+            writer.Write(component.GetType().FullName!);
+            if (component is ItemComponent native) { native.Serialize(writer); continue; }
+            foreach (var field in component.GetType().GetFields(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic).OrderBy(f => f.Name))
+                writer.Write(Convert.ToString(field.GetValue(component), System.Globalization.CultureInfo.InvariantCulture) ?? "");
+        }
+    }
 }
 public static class ItemLibrary { public static List<Item> Items = new(); }
 public class Inventory
@@ -98,6 +142,7 @@ public class StatusEffect_LiftBurden : StatusEffect { }
 public class StatusEffectsTarget { public List<StatusEffect> statusEffects = new(); }
 public class Player
 {
+    public int armor;
     public static Player Instance = new();
     public WorldInventory worldInventory = new();
     public StatusEffectsTarget statusEffectsTarget = new();
@@ -108,9 +153,10 @@ public class Player
         if (equippedItems.TryGetValue(item.slot, out Item? previous)) UnequipItem(previous);
         equippedItems[item.slot] = item;
         worldInventory.inventory.maxBulk += Bonus(item);
+        armor += item.GetItemComponents<QualityComponent>().Sum(q => 10 + (int)q.Quality * 3);
     }
     public void UnequipItem(Item item)
-    { equippedItems.Remove(item.slot); worldInventory.inventory.maxBulk -= Bonus(item); }
+    { equippedItems.Remove(item.slot); worldInventory.inventory.maxBulk -= Bonus(item); armor -= item.GetItemComponents<QualityComponent>().Sum(q => 10 + (int)q.Quality * 3); }
     private int Bonus(Item item) => item.GetItemComponents<ItemComponent_Enchantment>()
         .Count(e => e.enchantmentType == ItemComponent_Enchantment.EnchantmentType.Effortlessness) * 10 +
         (SilverpineMods.CustomItemLoader.Plugin.AttributeModifiers.TryGetValue(item.spriteName, out var definition) ? definition.carryCapacity : 0);

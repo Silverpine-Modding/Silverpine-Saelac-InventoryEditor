@@ -206,6 +206,144 @@ Reject(() => ItemEditing.ApplyToInventory(p, bag, rockFood, new() { ThirstRestor
 InventoryService.Remove(p, bag, meal);
 Reject(() => ItemEditing.ApplyToInventory(p, bag, meal, new() { HungerRestored = 10 }, false, "", ""), "Removed item accepted food edits");
 
+// Stacks use complete saved identity, while every underlying item remains independent.
+p = Fresh(); bag = p.worldInventory.inventory; bag.allowEncumbered = true;
+Item arrows = new() { name = "Arrow", bulk = 1 }; ItemLibrary.Items.Add(arrows);
+var arrowItems = InventoryService.Add(p, bag, arrows, 5, false, false, "", "");
+Check(InventoryStacks.Group(bag.items).Single().Count == 5, "Identical items did not form one stack");
+InventoryStacks.SetQuantity(p, bag, arrowItems[0], 5, 150);
+Check(bag.items.Count == 150 && InventoryStacks.Group(bag.items).Single().Count == 150, "Stack growth did not support counts beyond the copy batch limit");
+Check(bag.items.Distinct().Count() == 150 && arrowItems.All(bag.ContainsItem), "Stack growth replaced originals or shared instances");
+var stackReceipt = InventoryStacks.SetQuantity(p, bag, arrowItems[0], 150, 3)!;
+Check(bag.items.Count == 3 && bag.ContainsItem(arrowItems[0]) && stackReceipt.Items.Count == 147, "Stack reduction lost selected object or removed wrong count");
+bag.maxItems = 149;
+Reject(stackReceipt.Restore, "Whole-stack undo bypassed capacity preflight");
+Check(bag.items.Count == 3, "Rejected undo partially restored stack");
+bag.maxItems = 200; stackReceipt.Restore(); stackReceipt.Restore();
+Check(bag.items.Count == 150 && stackReceipt.Items.All(bag.ContainsItem), "Undo did not restore exact instances idempotently");
+stackReceipt = InventoryStacks.SetQuantity(p, bag, arrowItems[0], 150, 0)!;
+Check(bag.items.Count == 0, "Zero stack count did not remove all items");
+stackReceipt.Restore();
+Check(bag.items.Count == 150 && arrowItems.All(bag.ContainsItem), "Undo zero count lost original items");
+foreach (int invalid in new[] { -1, 10001, int.MaxValue })
+    Reject(() => InventoryStacks.SetQuantity(p, bag, arrowItems[0], 150, invalid), "Invalid absolute count accepted");
+Reject(() => InventoryStacks.SetQuantity(p, bag, arrowItems[0], 149, 1), "Stale stack count accepted");
+Check(bag.items.Count == 150, "Rejected stack changes altered inventory");
+bag.maxItems = 150;
+Reject(() => InventoryStacks.SetQuantity(p, bag, arrowItems[0], 150, 151), "Stack growth bypassed slot capacity");
+bag.maxItems = 200; bag.allowEncumbered = false; bag.maxBulk = 151;
+Reject(() => InventoryStacks.SetQuantity(p, bag, arrowItems[0], 150, 152), "Stack growth bypassed bulk capacity");
+Check(bag.items.Count == 150, "Capacity failure partially enlarged stack");
+bag.allowEncumbered = true;
+calls = 0;
+arrowItems[0].added = i => { i.inventory!.gold += 7; if (++calls == 2) throw new Exception("Stack add failure"); };
+Reject(() => InventoryStacks.SetQuantity(p, bag, arrowItems[0], 150, 153), "Stack addition hook failure ignored");
+Check(bag.items.Count == 150 && bag.gold == 13, "Failed stack growth left copies or changed gold");
+arrowItems[0].added = null;
+arrowItems[0].added = i => i.description = "Changed by pickup hook.";
+Reject(() => InventoryStacks.SetQuantity(p, bag, arrowItems[0], 150, 151), "Pickup hook produced a different stack without rejection");
+Check(bag.items.Count == 150 && InventoryStacks.Group(bag.items).Single().Count == 150, "Changed clone survived a failed absolute stack edit");
+arrowItems[0].added = null;
+
+p = Fresh(); bag = p.worldInventory.inventory; bag.allowEncumbered = true;
+Item identicalGear = new() { name = "Blade", bulk = 2, slot = EquipmentSlotType.Weapon, components = new() { new QualityComponent(), new ItemComponent_Durability() } };
+ItemLibrary.Items.Add(identicalGear);
+var gearStack = InventoryService.Add(p, bag, identicalGear, 4, false, false, "", "");
+p.EquipItem(gearStack[2]);
+Check(InventoryStacks.Group(bag.items).Single().Count == 4, "Equipped state incorrectly changed native stack identity");
+stackReceipt = InventoryStacks.SetQuantity(p, bag, gearStack[0], 4, 1)!;
+Check(bag.items.Single() == gearStack[2] && p.IsItemEquipped(gearStack[2]), "Shrinking a stack removed the equipped member unnecessarily");
+stackReceipt.Restore();
+Check(p.armor == 10 && p.IsItemEquipped(gearStack[2]) && bag.items.Count == 4, "Undo changed equipped state or bonuses");
+calls = 0;
+foreach (var gear in gearStack) gear.removed = _ => { if (++calls == 2) throw new Exception("Stack removal failure"); };
+Reject(() => InventoryStacks.SetQuantity(p, bag, gearStack[0], 4, 0), "Stack removal hook failure ignored");
+Check(bag.items.Count == 4 && gearStack.All(bag.ContainsItem) && p.IsItemEquipped(gearStack[2]) && p.armor == 10, "Failed stack reduction lost original state");
+foreach (var gear in gearStack) gear.removed = null;
+stackReceipt = InventoryStacks.SetQuantity(p, bag, gearStack[2], 4, 0)!;
+Check(p.armor == 0, "Removing equipped stack left armor behind");
+calls = 0;
+foreach (var gear in gearStack) gear.added = _ => { if (++calls == 2) throw new Exception("Stack undo failure"); };
+Reject(stackReceipt.Restore, "Undo hook failure ignored");
+Check(bag.items.Count == 0 && p.armor == 0, "Failed undo partially restored a stack");
+foreach (var gear in gearStack) gear.added = null;
+stackReceipt.Restore();
+Check(bag.items.Count == 4 && p.IsItemEquipped(gearStack[2]) && p.armor == 10, "Undo retry did not restore equipment and instances");
+
+Item variant = identicalGear.DeepClone(); variant.name = "Keepsake"; bag.TryAddItem(variant);
+variant = identicalGear.DeepClone(); variant.description = "Custom description."; bag.TryAddItem(variant);
+variant = identicalGear.DeepClone(); variant.spriteName = "different-model"; bag.TryAddItem(variant);
+variant = identicalGear.DeepClone(); variant.GetItemComponent<QualityComponent>()!.Quality = Quality.Legendary; bag.TryAddItem(variant);
+variant = identicalGear.DeepClone(); ItemEditing.Apply(variant, new() { Durability = 37 }); bag.TryAddItem(variant);
+Check(InventoryStacks.Group(bag.items).Count == 6, "Different text, models, quality or durability were merged");
+Item foodA = soup.DeepClone(), foodB = soup.DeepClone();
+bag.TryAddItem(foodA); bag.TryAddItem(foodB);
+Check(InventoryStacks.Find(bag, foodA).Count == 2, "Identical food failed to stack");
+ItemEditing.Apply(foodB, new() { SpoilageTurns = 7 });
+Check(InventoryStacks.Find(bag, foodA).Count == 1, "Different expiry timers merged");
+ItemEditing.Apply(foodB, new() { SpoilageTurns = ItemEditing.GetSpoilageTurns(foodA), HungerRestored = 89 });
+Check(InventoryStacks.Find(bag, foodA).Count == 1, "Different nutrition merged");
+foodA.failSerialization = true;
+Check(!InventoryStacks.Find(bag, foodA).CanResize && InventoryStacks.Group(bag.items).Sum(s => s.Count) == bag.items.Count, "Bad serializer hid inventory objects or enabled resize");
+Reject(() => InventoryStacks.SetQuantity(p, bag, foodA, 1, 2), "Unserializable item accepted stack editing");
+foodA.failSerialization = false;
+Item vendorStack = new() { name = "Vendor", components = new() { new ItemComponent_VendorItem() } }; bag.TryAddItem(vendorStack);
+Reject(() => InventoryStacks.SetQuantity(p, bag, vendorStack, 1, 2), "Vendor stock ownership was duplicated through stack editing");
+bag.items.Add(coins);
+Reject(() => InventoryStacks.SetQuantity(p, bag, coins, 1, 2), "Currency pickup accepted absolute stack quantity");
+InventoryService.Remove(p, bag, foodA);
+Reject(() => InventoryStacks.SetQuantity(p, bag, foodA, 1, 2), "Removed item accepted stack editing");
+Player.Instance = new Player();
+Reject(() => InventoryStacks.SetQuantity(p, bag, gearStack[2], 4, 2), "Stack edit crossed character boundary");
+
+// Native quality updates all eligible components and refreshes equipment bonuses.
+p = Fresh(); bag = p.worldInventory.inventory; bag.allowEncumbered = true;
+Item qualityItem = InventoryService.Add(p, bag, identicalGear, 1, false, false, "", "").Single();
+qualityItem.components.Add(new QualityComponent { Quality = Quality.Superior });
+p.EquipItem(qualityItem);
+var qualityDraft = new ItemEditDraft(qualityItem);
+Check(qualityDraft.HasQuality && qualityDraft.CurrentQuality == "Normal, Superior" && !qualityDraft.HasChanges, "Mixed quality draft incorrectly initialized");
+qualityDraft.QualityChoice = "Legendary";
+Check(qualityDraft.HasChanges && qualityDraft.Build().QualityValue == Quality.Legendary, "Quality-only edit not detected");
+ItemEditing.ApplyToInventory(p, bag, qualityItem, qualityDraft.Build(), false, "", "");
+Check(qualityItem.GetItemComponents<IQualityItemComponent>().All(q => q.Quality == Quality.Legendary) && p.armor == 56 && p.IsItemEquipped(qualityItem), "Quality upgrade failed to refresh equipped bonuses");
+ItemEditing.ApplyToInventory(p, bag, qualityItem, new() { QualityValue = Quality.Normal }, false, "", "");
+Check(p.armor == 20, "Quality downgrade retained upgraded armor");
+Check(identicalGear.GetItemComponent<QualityComponent>()!.Quality == Quality.Normal, "Quality edit mutated template");
+var rareCopies = InventoryService.Add(p, bag, qualityItem, 2, true, false, "", "", new() { QualityValue = Quality.Blessed });
+Check(rareCopies.All(i => i.GetItemComponents<IQualityItemComponent>().All(q => q.Quality == Quality.Blessed)) && p.armor == 20, "Duplicate quality edit changed source bonuses or missed components");
+Check(InventoryStacks.Find(bag, rareCopies[0]).Count == 2 && InventoryStacks.Find(bag, qualityItem).Count == 1, "Quality variants did not split into separate stacks");
+qualityItem.GetItemComponents<QualityComponent>()[1].Quality = Quality.Superior;
+qualityItem.GetItemComponents<QualityComponent>()[1].skipDeserialize = true;
+// Keep test armor consistent with an externally changed equipped component.
+p.armor = 26;
+calls = 0;
+qualityItem.addingComponent = _ => { if (++calls == 1) throw new Exception("Quality/enchantment failure"); };
+Reject(() => ItemEditing.ApplyToInventory(p, bag, qualityItem, new() { QualityValue = Quality.Legendary, Enchantment = "Effortlessness", Durability = 12 }, true, "New blade", "New description."), "Combined quality edit failure ignored");
+Check(qualityItem.GetItemComponents<QualityComponent>().Select(q => q.Quality).SequenceEqual(new[] { Quality.Normal, Quality.Superior }) && p.armor == 26 && p.IsItemEquipped(qualityItem), "Rollback lost mixed qualities or equipped armor");
+Check(qualityItem.name == "Blade" && qualityItem.GetItemComponent<ItemComponent_Durability>()!.Durability == 100, "Quality rollback lost text or durability");
+qualityItem.addingComponent = null;
+qualityItem.GetItemComponents<QualityComponent>()[1].skipDeserialize = false;
+Item potionItem = new() { name = "Potion", slot = EquipmentSlotType.Weapon, components = new() { new PotionQuality() } }; bag.TryAddItem(potionItem);
+potionItem.addingComponent = _ => throw new Exception("Potion rollback failure injection");
+Reject(() => ItemEditing.ApplyToInventory(p, bag, potionItem, new() { QualityValue = Quality.Legendary, Enchantment = "Effortlessness" }, false, "", ""), "Potion edit failure ignored");
+Check(potionItem.GetItemComponent<PotionQuality>()!.potency == 1.37f, "Rollback rounded original potion potency to a tier");
+potionItem.addingComponent = null;
+ItemEditing.ApplyToInventory(p, bag, potionItem, new() { QualityValue = Quality.Pristine }, false, "", "");
+Check(potionItem.GetItemComponent<PotionQuality>()!.Quality == Quality.Pristine, "Potion quality setter was not used");
+foreach (Quality tier in Enum.GetValues<Quality>())
+{
+    ItemEditing.ApplyToInventory(p, bag, qualityItem, new() { QualityValue = tier }, false, "", "");
+    Check(qualityItem.GetItemComponents<IQualityItemComponent>().All(q => q.Quality == tier) && p.armor == 20 + (int)tier * 6, "Native quality tier or equipment refresh failed: " + tier);
+}
+Reject(() => ItemEditing.ApplyToInventory(p, bag, qualityItem, new() { QualityValue = (Quality)7 }, false, "", ""), "Undefined rarity accepted");
+bag.TryAddItem(arrows.DeepClone());
+Item plainItem = bag.items.Last();
+Check(!new ItemEditDraft(plainItem).HasQuality, "Plain item enabled rarity editing");
+Reject(() => ItemEditing.ApplyToInventory(p, bag, plainItem, new() { QualityValue = Quality.Legendary }, false, "", ""), "Quality component invented for unsupported item");
+qualityDraft.QualityChoice = "Mythic";
+Reject(() => qualityDraft.Build(), "Unsupported quality draft accepted");
+
 // Inspect the actual installed assemblies for API, save format, bonus and grammar assumptions.
 string gameRoot = Path.GetFullPath(args[0]);
 using var game = AssemblyDefinition.ReadAssembly(Path.Combine(gameRoot, "Silverpine_Data/Managed/Assembly-CSharp.dll"));
@@ -213,6 +351,16 @@ IEnumerable<TypeDefinition> Nested(TypeDefinition type) => new[] { type }.Concat
 List<string> Strings(TypeDefinition type) => Nested(type).SelectMany(t => t.Methods).Where(m => m.HasBody)
     .SelectMany(m => m.Body.Instructions).Select(i => i.Operand).OfType<string>().ToList();
 TypeDefinition Type(string name) => game.MainModule.Types.Single(t => t.Name == name);
+var nativeQualityNames = Type("Quality").Fields.Where(f => f.IsStatic).Select(f => f.Name).ToArray();
+Check(nativeQualityNames.SequenceEqual(Enum.GetNames<Quality>()), "Native quality tiers changed");
+Check(Type("Item").Methods.Single(m => m.Name == "SetQuality").Body.Instructions.Any(i => i.Operand is MethodReference method && method.DeclaringType.Name == "IQualityItemComponent" && method.Name == "set_Quality"), "Native quality setter contract changed");
+Check(Type("ItemComponent_Potion").Methods.Single(m => m.Name == "set_Quality").Body.Instructions.Any(i => i.Operand is MethodReference method && method.Name == "QualityToPotency"), "Potion quality/potency mapping changed");
+Check(game.MainModule.Types.Where(t => t.Interfaces.Any(i => i.InterfaceType.Name == "IQualityItemComponent"))
+    .All(t => new[] { "Serialize", "Deserialize" }.All(m => t.Methods.Any(method => method.Name == m))), "Quality component persistence contract changed");
+var inventoryUiCalls = Nested(Type("InventoryUI")).SelectMany(t => t.Methods).Where(m => m.HasBody).SelectMany(m => m.Body.Instructions).Select(i => i.Operand).OfType<MethodReference>();
+Check(inventoryUiCalls.Any(m => m.Name == "IsSameSerializedAs"), "Native inventory stack rule changed");
+var stackCalls = Type("SerializableDeepCloner").Methods.Single(m => m.Name == "IsSameSerializedAs").Body.Instructions.Select(i => i.Operand).OfType<MethodReference>();
+Check(stackCalls.Count(m => m.Name == "SerializeWithType") == 2 && stackCalls.Any(m => m.Name == "SequenceEqual"), "Native stack byte comparison changed");
 var nativeText = Strings(Type("NPCFunction_GiveItem"));
 Check(nativeText.Contains("root ::= [A-Za-z0-9 .,!?'-]*") && nativeText.Contains("root ::= [A-Za-z .,!?'-]*") && nativeText.Any(s => s.Contains("no more than 30 words")), "Native text grammar changed");
 var serialize = Type("Inventory").Methods.Single(m => m.Name == "Serialize");

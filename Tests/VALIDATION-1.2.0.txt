@@ -1,0 +1,19 @@
+Inventory Editor 1.2.0 validation
+
+Release build: passed, zero warnings and errors.
+Automated harness: 146 checks passed.
+Installed DLL SHA256: 4CB3BD28282842682A41C46CDAF592A74FF6676EBF7C4C56C51121C9EE1575CA
+
+New coverage:
+- Food/water draft reads and Apply detection for food-only edits.
+- Selected item updates while templates and other copies retain their values.
+- Sanity, well-fed and spoilage preservation.
+- Add and duplicate with customized hunger/thirst values, including zero and negative effects.
+- Water-only edits preserve newer food values; beverages without expiry are supported.
+- Invalid/non-integer/overflowing/out-of-range inputs reject without partial changes.
+- Combined-edit rollback restores food/water after injected enchantment failure.
+- Non-edible and removed items reject food/water edits.
+- Installed game DLL checks confirm private integer hungerLoss/thirstLoss fields are serialized, deserialized and used by the native consumption callback.
+
+All previous inventory, text, condition, enchantment, currency, carrying-capacity and framework checks remain passing.
+The new tab compiled against the installed game/framework assemblies. Version 1.2.0 was not live-tested in the game; prior visual checks are recorded in VALIDATION-1.0.0.txt.

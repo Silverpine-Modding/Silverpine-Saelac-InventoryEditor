@@ -12,7 +12,7 @@ internal sealed class EditorTheme : IDisposable
     private static readonly Color TextColor = Hex(0xE4EAF0);
     private static readonly Color MutedColor = Hex(0x94A3B3);
     internal GUISkin Skin { get; }
-    internal GUIStyle Title, Eyebrow, Heading, Muted, Badge, Card, SelectedCard, Primary, RowButton, SelectedButton, Status, Danger, RowTitle;
+    internal GUIStyle Title, Eyebrow, Heading, Muted, Badge, Card, SelectedCard, Primary, RowButton, SelectedButton, Status, Danger, RowTitle, Tab, ActiveTab;
     private readonly List<Texture2D> textures = new();
 
     internal EditorTheme(GUISkin source)
@@ -67,6 +67,8 @@ internal sealed class EditorTheme : IDisposable
         Primary.hover.textColor = Hex(0x0C241C);
         Primary.active.background = Rounded(Hex(0x69BDA1), Hex(0x69BDA1));
         Primary.active.textColor = Primary.focused.textColor = Hex(0x0C241C);
+        Tab = new GUIStyle(Skin.button) { fontSize = 13, padding = new RectOffset(4, 4, 6, 6) };
+        ActiveTab = new GUIStyle(Primary) { fontSize = 13, padding = new RectOffset(4, 4, 6, 6) };
         RowButton = new GUIStyle(Skin.button) { alignment = TextAnchor.MiddleLeft, wordWrap = true,
             fixedHeight = 0, padding = new RectOffset(10, 8, 10, 10) };
         RowButton.normal.background = null;

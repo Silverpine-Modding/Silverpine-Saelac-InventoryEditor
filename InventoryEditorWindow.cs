@@ -16,6 +16,10 @@ internal sealed class InventoryEditorWindow : ModToolBehaviour
     private Inventory inventory = null!;
     private EditorTheme? theme;
     private List<Item> catalog = new(), catalogMatches = new(), owned = new(), ownedMatches = new();
+    private List<InventoryStack> ownedStacks = new();
+    private readonly Dictionary<Item, InventoryStack> stacksByItem = new();
+    private string stackQuantity = "1";
+    private bool stackQuantityDirty;
     private readonly Dictionary<Item, Sprite?> icons = new();
     private readonly Dictionary<Item, string> rowNames = new();
     private readonly HashSet<Item> equipped = new();
@@ -98,7 +102,7 @@ internal sealed class InventoryEditorWindow : ModToolBehaviour
 
     private void FilterOwned()
     {
-        ownedMatches = owned.Where(i => Matches(i, inventorySearch)).ToList();
+        ownedMatches = ownedStacks.Where(s => Matches(s.Item, inventorySearch)).Select(s => s.Item).ToList();
         inventoryScroll.y = Mathf.Min(inventoryScroll.y, Mathf.Max(0, ownedMatches.Count * RowHeight - 405));
     }
 
@@ -112,6 +116,10 @@ internal sealed class InventoryEditorWindow : ModToolBehaviour
         equipped.Clear();
         foreach (Item item in player.equippedItems.Values) if (item != null) equipped.Add(item);
         owned = owned.OrderByDescending(equipped.Contains).ThenBy(i => i.name, StringComparer.OrdinalIgnoreCase).ToList();
+        ownedStacks = InventoryStacks.Group(owned);
+        stacksByItem.Clear();
+        foreach (InventoryStack stack in ownedStacks)
+            foreach (Item member in stack.Items) stacksByItem[member] = stack;
         rowNames.Clear();
         foreach (Item item in owned)
         {
@@ -131,6 +139,8 @@ internal sealed class InventoryEditorWindow : ModToolBehaviour
         catch (Exception ex) { capacityError = ex.Message; }
         if (selectedOwned && selected != null && !inventory.ContainsItem(selected))
         { selected = null; custom = false; detailText = ""; }
+        if (!stackQuantityDirty && selected != null && stacksByItem.TryGetValue(selected, out InventoryStack selectedStack))
+            stackQuantity = selectedStack.Count.ToString(CultureInfo.InvariantCulture);
     }
 
     private void Select(Item item, bool fromInventory)
@@ -139,6 +149,8 @@ internal sealed class InventoryEditorWindow : ModToolBehaviour
         selectedOwned = fromInventory;
         custom = false;
         itemDraft = new ItemEditDraft(item);
+        stackQuantityDirty = false;
+        stackQuantity = fromInventory ? InventoryStacks.Find(inventory, item).Count.ToString(CultureInfo.InvariantCulture) : "1";
         customName = GeneratedItemText.Filter(item.name ?? "", true);
         customDescription = GeneratedItemText.LimitDescription(item.description ?? "");
         detailScroll = Vector2.zero;
@@ -276,7 +288,7 @@ internal sealed class InventoryEditorWindow : ModToolBehaviour
         GUI.Label(new Rect(484, 294, 380, 21), "Search your items  /  equipped items appear first", theme!.Muted);
         string query = GUI.TextField(new Rect(484, 320, 384, 36), inventorySearch, 160);
         if (query != inventorySearch) { inventorySearch = query; inventoryScroll = Vector2.zero; FilterOwned(); }
-        GUI.Label(new Rect(484, 364, 380, 25), $"{ownedMatches.Count} shown  /  {equipped.Count} equipped", theme.Muted);
+        GUI.Label(new Rect(484, 364, 380, 25), $"{ownedMatches.Count} stacks  /  {owned.Count} items  /  {equipped.Count} equipped", theme.Muted);
         DrawRows(new Rect(484, 401, 384, 363), ownedMatches, ref inventoryScroll, true);
         bool enabled = GUI.enabled;
         GUI.enabled = enabled && removed != null;
@@ -287,7 +299,7 @@ internal sealed class InventoryEditorWindow : ModToolBehaviour
             receipt.Restore();
             removed = null;
             Select(receipt.Item, true);
-            SetStatus("Restored " + receipt.Item.name + ".");
+            SetStatus($"Restored {receipt.Items.Count} x {receipt.Item.name}.");
         };
         GUI.enabled = enabled;
     }
@@ -309,16 +321,21 @@ internal sealed class InventoryEditorWindow : ModToolBehaviour
         {
             Item item = items[i];
             float y = i * RowHeight;
-            bool active = ReferenceEquals(item, selected) && selectedOwned == fromInventory;
+            InventoryStack? stack = fromInventory && stacksByItem.TryGetValue(item, out InventoryStack found) ? found : null;
+            bool active = selectedOwned == fromInventory && (ReferenceEquals(item, selected) || selected != null && stack?.Items.Contains(selected) == true);
             Rect row = new(0, y, width, 65);
             GUI.Box(row, GUIContent.none, active ? theme!.SelectedCard : theme!.Card);
             // The selection hit area must not consume the quick-add button's mouse event.
             if (GUI.Button(new Rect(0, y, fromInventory ? width : width - 48, 65), GUIContent.none, GUIStyle.none)) Select(item, fromInventory);
             DrawIcon(new Rect(9, y + 11, 42, 42), item);
             string name = fromInventory && rowNames.TryGetValue(item, out string finalName) ? finalName : item.name ?? "Unnamed item";
-            GUI.Label(new Rect(62, y + 7, width - (fromInventory ? 74 : 112), 25), new GUIContent(name, name), theme.RowTitle);
+            GUI.Label(new Rect(62, y + 7, width - (fromInventory ? 140 : 112), 25), new GUIContent(name, name), theme.RowTitle);
+            if (stack != null)
+                GUI.Label(new Rect(width - 72, y + 7, 64, 25), "×" + stack.Count.ToString("N0"), theme.Badge);
+            var quality = item.GetItemComponent<IQualityItemComponent>();
             GUI.Label(new Rect(62, y + 33, width - 68, 23),
-                (fromInventory && equipped.Contains(item) ? "EQUIPPED  /  " : "") + item.itemCategory + "  /  " + item.bulk.ToString("0.##") + " bulk", theme.Muted);
+                (stack?.Items.Any(equipped.Contains) == true ? "EQUIPPED  /  " : "") +
+                (quality != null ? quality.Quality + "  /  " : "") + item.itemCategory + "  /  " + item.bulk.ToString("0.##") + " bulk each", theme.Muted);
             if (!fromInventory && GUI.Button(new Rect(width - 43, y + 7, 34, 27), new GUIContent("+", "Add one " + item.name)))
             {
                 Item template = item;
@@ -330,34 +347,39 @@ internal sealed class InventoryEditorWindow : ModToolBehaviour
 
     private void DrawDetails()
     {
-        Panel(new Rect(900, 218, 512, 606), "03  /  INSPECT & EDIT", selectedOwned ? "Selected inventory item" : "Selected template");
+        int stackCount = selectedOwned && selected != null && stacksByItem.TryGetValue(selected, out InventoryStack selectedStack) ? selectedStack.Count : 1;
+        Panel(new Rect(900, 218, 512, 606), "03  /  INSPECT & EDIT", selectedOwned ?
+            (stackCount > 1 ? $"Selected stack / {stackCount:N0} items" : "Selected inventory item") : "Selected template");
         if (selected == null)
         {
             GUI.Label(new Rect(924, 330, 464, 100), "Select an item to inspect it, add copies, or create a custom version.", theme!.Heading);
-            GUI.Label(new Rect(924, 446, 464, 90), "The + button in the library adds one item immediately.\n\nEach inventory row is a separate item, including duplicates.", theme.Muted);
+            GUI.Label(new Rect(924, 446, 464, 90), "The + button in the library adds one item immediately.\n\nMatching items share a stack row. Select one to edit its count under Details.", theme.Muted);
             return;
         }
         Item item = selected;
         DrawIcon(new Rect(924, 304, 60, 60), item);
         GUI.Label(new Rect(998, 303, 388, 57), new GUIContent(item.name, item.name), theme!.Heading);
         GUI.Label(new Rect(924, 375, 464, 27), item.itemCategory + "  /  " + item.bulk.ToString("0.##") + " bulk  /  Base value " + item.value, theme.Muted);
-        string[] tabs = { "Details", "Custom text", "Condition", "Food / water" };
+        string[] tabs = { "Details", "Text", "Condition", "Food/water", "Quality" };
         for (int i = 0; i < tabs.Length; i++)
-            if (GUI.Button(new Rect(924 + i * 118, 413, 110, 36), tabs[i], detailTab == i ? theme.Primary : GUI.skin.button))
+            if (GUI.Button(new Rect(924 + i * 94, 413, 88, 36), tabs[i], detailTab == i ? theme.ActiveTab : theme.Tab))
             { detailTab = i; detailScroll = Vector2.zero; }
 
         if (detailTab == 1) DrawCustomText();
         else if (detailTab == 2) DrawCondition();
         else if (detailTab == 3) DrawFoodWater();
+        else if (detailTab == 4) DrawQuality();
         else
         {
-            float textHeight = Mathf.Max(225, theme.Skin.label.CalcHeight(new GUIContent(detailText), 440));
-            detailScroll = GUI.BeginScrollView(new Rect(924, 460, 464, 233), detailScroll, new Rect(0, 0, 442, textHeight));
+            float descriptionTop = 460;
+            if (selectedOwned) { DrawStackQuantity(item); descriptionTop = 563; }
+            float textHeight = Mathf.Max(693 - descriptionTop, theme.Skin.label.CalcHeight(new GUIContent(detailText), 440));
+            detailScroll = GUI.BeginScrollView(new Rect(924, descriptionTop, 464, 693 - descriptionTop), detailScroll, new Rect(0, 0, 442, textHeight));
             GUI.Label(new Rect(0, 0, 440, textHeight), string.IsNullOrWhiteSpace(detailText) ? "This item has no description." : detailText);
             GUI.EndScrollView();
         }
 
-        GUI.Label(new Rect(924, 704, 170, 25), "Quantity  /  1-100", theme.Muted);
+        GUI.Label(new Rect(924, 704, 170, 25), "Copies to add / 1-100", theme.Muted);
         quantity = GUI.TextField(new Rect(1096, 699, 74, 36), quantity, 3);
         bool validQuantity = int.TryParse(quantity, out int amount) && amount >= 1 && amount <= InventoryService.MaxBatch;
         bool validText = !custom || IsCustomValid();
@@ -372,10 +394,12 @@ internal sealed class InventoryEditorWindow : ModToolBehaviour
             pending = () => Add(item, fromInventory, amount, personalized, name, description, draft?.Build());
         }
         GUI.enabled = enabled && selectedOwned;
-        if (GUI.Button(new Rect(924, 749, 148, 38), "Remove item", theme.Danger)) pending = () =>
+        if (GUI.Button(new Rect(924, 749, 148, 38), "Remove one", theme.Danger)) pending = () =>
         {
+            InventoryStack stack = InventoryStacks.Find(inventory, item);
             removed = InventoryService.Remove(player, inventory, item);
-            selected = null;
+            Item? remaining = stack.Items.FirstOrDefault(inventory.ContainsItem);
+            if (remaining != null) Select(remaining, true); else selected = null;
             SetStatus("Removed " + item.name + ". Use Undo last removal to restore it.");
         };
         GUI.enabled = enabled && selectedOwned && (custom || itemDraft?.HasChanges == true) && validText;
@@ -393,7 +417,59 @@ internal sealed class InventoryEditorWindow : ModToolBehaviour
             };
         }
         GUI.enabled = enabled;
-        GUI.Label(new Rect(924, 791, 464, 24), selectedOwned ? "Apply affects this item; Duplicate uses your pending edits." : "Pending edits apply to new copies of this template.", theme.Muted);
+        GUI.Label(new Rect(924, 791, 464, 24), selectedOwned ? "Apply edits one item; changed items split from their stack." : "Pending edits apply to new copies of this template.", theme.Muted);
+    }
+
+    private void DrawStackQuantity(Item item)
+    {
+        InventoryStack? stack = stacksByItem.TryGetValue(item, out InventoryStack found) ? found : null;
+        if (stack == null) return;
+        GUI.Label(new Rect(924, 460, 464, 24), $"Stack count  /  currently {stack.Count:N0}", theme!.Muted);
+        bool enabled = GUI.enabled;
+        GUI.enabled = enabled && stack.CanResize;
+        string input = GUI.TextField(new Rect(924, 487, 226, 36), stackQuantity, 5);
+        if (input != stackQuantity) { stackQuantity = input; stackQuantityDirty = true; }
+        bool valid = int.TryParse(stackQuantity, NumberStyles.None, CultureInfo.InvariantCulture, out int amount) && amount <= InventoryStacks.MaxQuantity;
+        GUI.enabled = enabled && stack.CanResize && valid && amount != stack.Count;
+        if (GUI.Button(new Rect(1162, 487, 226, 36), "Set stack count", theme.Primary))
+        {
+            int previousCount = stack.Count;
+            pending = () =>
+            {
+                var receipt = InventoryStacks.SetQuantity(player, inventory, item, previousCount, amount);
+                if (receipt != null) removed = receipt;
+                stackQuantityDirty = false;
+                if (!inventory.ContainsItem(item))
+                {
+                    Item? remaining = stack.Items.FirstOrDefault(inventory.ContainsItem);
+                    if (remaining != null) Select(remaining, true); else selected = null;
+                }
+                SetStatus($"Stack count set to {amount:N0}." + (receipt != null ? " Undo last removal restores the removed items." : " New copies use the item's current saved values."));
+            };
+        }
+        GUI.enabled = enabled;
+        GUI.Label(new Rect(924, 527, 464, 34), stack.CanResize ?
+            "0–10,000 items; 0 removes the stack. Pending edits apply separately." :
+            stack.Error ?? "Currency and vendor-owned items cannot be resized.", theme.Muted);
+    }
+
+    private void DrawQuality()
+    {
+        if (itemDraft == null) return;
+        if (!itemDraft.HasQuality)
+        {
+            GUI.Label(new Rect(924, 470, 464, 60), "This item does not support rarity / quality.", theme!.Heading);
+            GUI.Label(new Rect(924, 545, 464, 70), "Select an item with the game's quality system to change its tier.", theme.Muted);
+            return;
+        }
+        GUI.Label(new Rect(924, 460, 464, 24), "Rarity / quality  /  " + itemDraft.CurrentQuality, theme!.Muted);
+        for (int i = 0; i < ItemEditing.Qualities.Length; i++)
+        {
+            string choice = ItemEditing.Qualities[i];
+            if (GUI.Button(new Rect(924 + i % 2 * 238, 491 + i / 2 * 41, 226, 35), choice,
+                choice == itemDraft.QualityChoice ? theme.Primary : GUI.skin.button)) itemDraft.QualityChoice = choice;
+        }
+        GUI.Label(new Rect(924, 659, 464, 36), "Uses native tiers and their stat effects. Apply edits one item;\nAdd / Duplicate applies the tier to all new copies.", theme.Muted);
     }
 
     private void DrawCustomText()

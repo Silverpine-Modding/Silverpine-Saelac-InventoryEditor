@@ -11,6 +11,7 @@
     <Compile Include="..\InventoryService.cs" Link="InventoryService.cs" />
     <Compile Include="..\CharacterValues.cs" Link="CharacterValues.cs" />
     <Compile Include="..\ItemEditing.cs" Link="ItemEditing.cs" />
+    <Compile Include="..\InventoryStacks.cs" Link="InventoryStacks.cs" />
     <Reference Include="Mono.Cecil"><HintPath>$(SilverpineGameDir)\BepInEx\core\Mono.Cecil.dll</HintPath></Reference>
   </ItemGroup>
 </Project>

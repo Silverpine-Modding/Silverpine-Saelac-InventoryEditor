@@ -12,21 +12,24 @@ internal sealed class ItemEditOptions
     internal float? Durability;
     internal int? SpoilageTurns;
     internal int? HungerRestored, ThirstRestored;
+    internal Quality? QualityValue;
     // null keeps every existing enchantment; "None" explicitly removes it.
     internal string? Enchantment;
-    internal bool HasChanges => Durability.HasValue || SpoilageTurns.HasValue || Enchantment != null || HungerRestored.HasValue || ThirstRestored.HasValue;
+    internal bool HasChanges => Durability.HasValue || SpoilageTurns.HasValue || Enchantment != null || HungerRestored.HasValue || ThirstRestored.HasValue || QualityValue.HasValue;
 }
 
 internal sealed class ItemEditDraft
 {
-    internal readonly bool HasDurability, HasSpoilage, CanEnchant, IsEdible;
+    internal readonly bool HasDurability, HasSpoilage, CanEnchant, IsEdible, HasQuality;
+    internal readonly string CurrentQuality;
+    internal string QualityChoice = "Unchanged";
     internal readonly float MaxDurability;
     internal readonly string OriginalDurability, OriginalMinutes, CurrentEnchantment;
     internal string Durability, Minutes, Enchantment = "Unchanged";
     internal readonly string OriginalHunger, OriginalThirst;
     internal string Hunger, Thirst;
     internal bool HasChanges => Durability != OriginalDurability || Minutes != OriginalMinutes || Enchantment != "Unchanged" ||
-        Hunger != OriginalHunger || Thirst != OriginalThirst;
+        Hunger != OriginalHunger || Thirst != OriginalThirst || QualityChoice != "Unchanged";
 
     internal ItemEditDraft(Item item)
     {
@@ -42,6 +45,9 @@ internal sealed class ItemEditDraft
         IsEdible = item.GetItemComponent<ItemComponent_Edible>() != null;
         OriginalHunger = Hunger = IsEdible ? ItemEditing.GetHungerRestored(item).ToString(CultureInfo.InvariantCulture) : "";
         OriginalThirst = Thirst = IsEdible ? ItemEditing.GetThirstRestored(item).ToString(CultureInfo.InvariantCulture) : "";
+        var qualities = item.GetItemComponents<IQualityItemComponent>();
+        HasQuality = qualities.Count > 0;
+        CurrentQuality = HasQuality ? string.Join(", ", qualities.Select(c => c.Quality.ToString()).Distinct()) : "Not supported";
     }
 
     internal ItemEditOptions Build()
@@ -61,6 +67,12 @@ internal sealed class ItemEditDraft
             options.SpoilageTurns = (int)(minutes * 2m);
         }
         if (Enchantment != "Unchanged") options.Enchantment = Enchantment;
+        if (QualityChoice != "Unchanged")
+        {
+            if (!Enum.GetNames(typeof(Quality)).Contains(QualityChoice))
+                throw new InvalidDataException("Choose one of the game's quality tiers.");
+            options.QualityValue = Enum.Parse<Quality>(QualityChoice);
+        }
         if (Hunger != OriginalHunger) options.HungerRestored = ParseRestoration(Hunger, "Food");
         if (Thirst != OriginalThirst) options.ThirstRestored = ParseRestoration(Thirst, "Water");
         return options;
@@ -85,6 +97,7 @@ internal static class ItemEditing
     private static readonly FieldInfo HungerField = RequiredField(typeof(ItemComponent_Edible), "hungerLoss", typeof(int));
     private static readonly FieldInfo ThirstField = RequiredField(typeof(ItemComponent_Edible), "thirstLoss", typeof(int));
     internal static readonly string[] Enchantments = new[] { "Unchanged", "None" }.Concat(Enum.GetNames(typeof(ItemComponent_Enchantment.EnchantmentType))).ToArray();
+    internal static readonly string[] Qualities = new[] { "Unchanged" }.Concat(Enum.GetNames(typeof(Quality))).ToArray();
 
     private static FieldInfo RequiredField(Type type, string name, Type valueType)
     {
@@ -100,6 +113,13 @@ internal static class ItemEditing
 
     internal static void Validate(Item item, ItemEditOptions options)
     {
+        if (options.QualityValue.HasValue)
+        {
+            if (item.GetItemComponent<IQualityItemComponent>() == null)
+                throw new InvalidDataException("This item does not support rarity / quality.");
+            if (!Enum.IsDefined(typeof(Quality), options.QualityValue.Value))
+                throw new InvalidDataException("Choose one of the game's quality tiers.");
+        }
         if (options.HungerRestored.HasValue || options.ThirstRestored.HasValue)
         {
             if (item.GetItemComponent<ItemComponent_Edible>() == null)
@@ -145,6 +165,7 @@ internal static class ItemEditing
             HungerField.SetValue(item.GetItemComponent<ItemComponent_Edible>(), options.HungerRestored.Value);
         if (options.ThirstRestored.HasValue)
             ThirstField.SetValue(item.GetItemComponent<ItemComponent_Edible>(), options.ThirstRestored.Value);
+        if (options.QualityValue.HasValue) item.SetQuality(options.QualityValue.Value);
         if (options.Enchantment != null)
         {
             item.RemoveItemComponentsOfType<ItemComponent_Enchantment>();
@@ -167,8 +188,20 @@ internal static class ItemEditing
         int? oldHunger = edible == null ? null : GetHungerRestored(item);
         int? oldThirst = edible == null ? null : GetThirstRestored(item);
         List<ItemComponent_Enchantment> oldEnchantments = item.GetItemComponents<ItemComponent_Enchantment>();
+        // A potion's quality setter maps to potency. Restoring only its old tier
+        // would lose a potency between tiers, so retain exact component bytes.
+        var qualityState = new List<(ItemComponent Component, Quality Tier, byte[] Data)>();
+        if (options.QualityValue.HasValue)
+            foreach (ItemComponent component in item.GetItemComponents<ItemComponent>().Where(c => c is IQualityItemComponent))
+            {
+                using var stream = new MemoryStream();
+                using var writer = new BinaryWriter(stream);
+                component.Serialize(writer);
+                writer.Flush();
+                qualityState.Add((component, ((IQualityItemComponent)component).Quality, stream.ToArray()));
+            }
         string oldName = item.name, oldDescription = item.description;
-        bool reEquip = options.Enchantment != null && player.IsItemEquipped(item);
+        bool reEquip = (options.Enchantment != null || options.QualityValue.HasValue) && player.IsItemEquipped(item);
         try
         {
             if (reEquip) player.UnequipItem(item);
@@ -186,6 +219,13 @@ internal static class ItemEditing
                 if (oldSpoilage.HasValue) SpoilageField.SetValue(item.GetItemComponent<ItemComponent_Expirable>(), oldSpoilage.Value);
                 if (oldHunger.HasValue) HungerField.SetValue(edible, oldHunger.Value);
                 if (oldThirst.HasValue) ThirstField.SetValue(edible, oldThirst.Value);
+                foreach (var state in qualityState)
+                {
+                    // Some native readers skip old-save upgrade components.
+                    ((IQualityItemComponent)state.Component).Quality = state.Tier;
+                    using var reader = new BinaryReader(new MemoryStream(state.Data));
+                    state.Component.Deserialize(reader);
+                }
                 if (options.Enchantment != null)
                 {
                     item.RemoveItemComponentsOfType<ItemComponent_Enchantment>();
